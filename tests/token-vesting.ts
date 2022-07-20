@@ -1,16 +1,24 @@
 import * as anchor from "@project-serum/anchor";
-import { Program } from "@project-serum/anchor";
-import { TokenVesting } from "../target/types/token_vesting";
+import { IDL as lockerManagerIDL } from "../target/types/token_vesting";
 
-describe("token-vesting", () => {
-  // Configure the client to use the local cluster.
-  anchor.setProvider(anchor.AnchorProvider.env());
+const LOCKER_MANAGER_PROGRAM_ID = new anchor.web3.PublicKey(
+  "GHUcyYWLFtz3wPc4KXswCvpS2ihVx9i4BAcAJyMmHMDJ"
+);
 
-  const program = anchor.workspace.TokenVesting as Program<TokenVesting>;
+describe("Locker Manager and Pool Manager", () => {
+  const provider = anchor.AnchorProvider.env()
+
+  anchor.setProvider(provider);
+
+  const lockerManager = new anchor.Program(
+    lockerManagerIDL,
+    LOCKER_MANAGER_PROGRAM_ID,
+    provider
+  );
 
   it("Is initialized!", async () => {
     // Add your test here.
-    const tx = await program.methods.initialize().rpc();
+    const tx = await lockerManager.methods.initialize().rpc();
     console.log("Your transaction signature", tx);
   });
 });

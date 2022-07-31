@@ -1,5 +1,5 @@
 use anchor_lang::prelude::*;
-use anchor_spl::token::{Token, TokenAccount};
+use anchor_spl::token::{Token, TokenAccount, Transfer, transfer};
 
 declare_id!("GHUcyYWLFtz3wPc4KXswCvpS2ihVx9i4BAcAJyMmHMDJ");
 
@@ -8,13 +8,13 @@ pub mod token_vesting {
     use super::*;
 
     pub fn initialize(ctx: Context<Initialize>, _locker_manager_nonce: u64) -> Result<()> {
-        // TODO
+        ctx.accounts.locker_manager_info.authority = *ctx.accounts.authority.key;
 
         Ok(())
     }
 
     pub fn set_authority(ctx: Context<Auth>, _locker_manager_nonce: u64, new_authority: Pubkey) -> Result<()> {
-        // TODO
+        ctx.accounts.locker_manager_info.authority = new_authority;
 
         Ok(())
     }
@@ -29,7 +29,22 @@ pub mod token_vesting {
         period_count: u64,
         reward_kepper: Option<RewardKeeper>,
     ) -> Result<()> {
-        // TODO
+        let locker = &mut ctx.accounts.locker;
+        locker.beneficiary = beneficiary;
+        locker.mint = ctx.accounts.vault.mint;
+        locker.vault = *ctx.accounts.vault.to_account_info().key;
+        locker.period_count = period_count;
+        locker.start_balance = deposit_amount;
+        locker.end_ts = end_ts;
+        locker.start_ts = start_ts;
+        locker.created_ts = ctx.accounts.clock.unix_timestamp;
+        locker.current_balance = deposit_amount;
+        locker.whitelist_owned = 0;
+        locker.grantor = *ctx.accounts.depositor_authority.key;
+        locker.nonce = nonce;
+        locker.reward_keeper = reward_kepper;
+
+        transfer(ctx.accounts.into(), deposit_amount)?;
 
         Ok(())
     }
@@ -53,23 +68,41 @@ pub struct LockerManagerInfo {
 }
 
 #[derive(Accounts)]
+#[instruction(locker_manager_nonce: u64)]
 pub struct Initialize<'info> {
+    #[account(mut)]
     pub authority: Signer<'info>,
+    #[account(
+        init,
+        seeds = [b"locker-manager".as_ref(), &locker_manager_nonce.to_le_bytes()],
+        bump,
+        payer = authority,
+        space = 8 + 32 + 32
+    )]
     pub locker_manager_info: Box<Account<'info, LockerManagerInfo>>,
     pub system_program: Program<'info, System>,
 }
 
 #[derive(Accounts)]
+#[instruction(locker_manager_nonce: u64)]
 pub struct Auth<'info> {
     pub authority: Signer<'info>,
+    #[account(
+        mut,
+        seeds = [b"locker-manager".as_ref(), &locker_manager_nonce.to_le_bytes()],
+        bump
+    )]
     pub locker_manager_info: Box<Account<'info, LockerManagerInfo>>,
 }
 
 #[derive(Accounts)]
 pub struct CreateLocker<'info> {
+    #[account(zero)]
     pub locker: Box<Account<'info, Locker>>,
+    #[account(mut)]
     pub vault: Account<'info, TokenAccount>,
     /// CHECK: This is not dangerous because we don't read or write from this account
+    #[account(mut)]
     pub depositor: AccountInfo<'info>,
     pub depositor_authority: Signer<'info>,
     // Misc.
@@ -117,4 +150,30 @@ pub struct Locker {
 pub struct RewardKeeper {
     pub program: Pubkey,
     pub metadata: Pubkey,
+}
+
+impl<'a, 'b, 'c, 'info> From<&mut CreateLocker<'info>>
+    for CpiContext<'a, 'b, 'c, 'info, Transfer<'info>>
+{
+    fn from(accounts: &mut CreateLocker<'info>) -> CpiContext<'a, 'b, 'c, 'info, Transfer<'info>> {
+        let cpi_accounts = Transfer {
+            from: accounts.depositor.clone(),
+            to: accounts.vault.to_account_info(),
+            authority: accounts.depositor_authority.to_account_info().clone(),
+        };
+        let cpi_program = accounts.token_program.to_account_info().clone();
+        CpiContext::new(cpi_program, cpi_accounts)
+    }
+}
+
+impl<'a, 'b, 'c, 'info> From<&Withdraw<'info>> for CpiContext<'a, 'b, 'c, 'info, Transfer<'info>> {
+    fn from(accounts: &Withdraw<'info>) -> CpiContext<'a, 'b, 'c, 'info, Transfer<'info>> {
+        let cpi_accounts = Transfer {
+            from: accounts.vault.to_account_info(),
+            to: accounts.token.to_account_info(),
+            authority: accounts.locker_vault_authority.to_account_info(),
+        };
+        let cpi_program = accounts.token_program.to_account_info();
+        CpiContext::new(cpi_program, cpi_accounts)
+    }
 }

@@ -1,6 +1,8 @@
 use anchor_lang::prelude::*;
 use anchor_spl::token::{Token, TokenAccount, Transfer, transfer};
 
+mod calculator;
+
 declare_id!("GHUcyYWLFtz3wPc4KXswCvpS2ihVx9i4BAcAJyMmHMDJ");
 
 #[program]
@@ -50,13 +52,34 @@ pub mod token_vesting {
     }
 
     pub fn withdraw(ctx: Context<Withdraw>, amount: u64) -> Result<()> {
-        // TODO
+        let available_for_withdrawal = calculator::available_for_withdrawal(
+            &ctx.accounts.locker,
+            ctx.accounts.clock.unix_timestamp,
+        );
+
+        // Transfer funds out.
+        let seeds = &[
+            ctx.accounts.locker.to_account_info().key.as_ref(),
+            &[ctx.accounts.locker.nonce],
+        ];
+        let signer = &[&seeds[..]];
+        let cpi_ctx = CpiContext::from(&*ctx.accounts).with_signer(signer);
+        transfer(cpi_ctx, amount)?;
+
+        // Bookeeping.
+        let locker = &mut ctx.accounts.locker;
+        locker.current_balance -= amount;
 
         Ok(())
     }
 
     pub fn available_for_withdrawal(ctx: Context<AvailableForWithdrawal>) -> Result<()> {
-        // TODO
+        let available = calculator::available_for_withdrawal(
+            &ctx.accounts.locker,
+            ctx.accounts.clock.unix_timestamp,
+        );
+        // Log as string so that JS can read as a BN.
+        msg!(&format!("{{ \"result\": \"{}\" }}", available));
 
         Ok(())
     }
@@ -113,11 +136,15 @@ pub struct CreateLocker<'info> {
 
 #[derive(Accounts)]
 pub struct Withdraw<'info> {
+    #[account(mut, has_one = beneficiary, has_one = vault)]
     locker: Box<Account<'info, Locker>>,
     beneficiary: Signer<'info>,
+    #[account(mut)]
     vault: Account<'info, TokenAccount>,
     /// CHECK: This is not dangerous because we don't read or write from this account
+    #[account(seeds = [locker.to_account_info().key.as_ref()], bump = locker.nonce)]
     locker_vault_authority: AccountInfo<'info>,
+    #[account(mut)]
     token: Account<'info, TokenAccount>,
     token_program: Program<'info, Token>,
     clock: Sysvar<'info, Clock>,
